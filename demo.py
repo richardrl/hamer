@@ -155,7 +155,7 @@ def main():
             pred_keypoints_2d_copy = model.cfg.MODEL.IMAGE_SIZE * (pred_keypoints_2d_copy + 1.0) / 2.0
 
             # -> add fake confidence score to the end
-            pred_keypoints_2d_copy = torch.cat([pred_keypoints_2d_copy, torch.ones(*pred_keypoints_2d_copy.shape, 1).to(device)])
+            pred_keypoints_2d_copy = torch.cat([pred_keypoints_2d_copy, torch.ones(*pred_keypoints_2d_copy.shape[:2], 1).to(device)], dim=-1)
 
             # Render the result
             batch_size = batch['img'].shape[0]
@@ -173,11 +173,9 @@ def main():
                                         mesh_base_color=LIGHT_BLUE,
                                         scene_bg_color=(1, 1, 1),
                                         )
-
-                gt_keypoints_img = render_openpose(regression_img, pred_keypoints_2d_copy[n])
-                import pdb
-                pdb.set_trace()
-                #  / 255.
+                # -> H?, W?, 3
+                # pick out all
+                regression_img = render_openpose(regression_img * 255., pred_keypoints_2d_copy[n].data.cpu().numpy()) / 255.
                 # let's place the 2D keypoints ontop of the regression image
 
                 if args.side_view:
