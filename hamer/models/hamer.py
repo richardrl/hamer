@@ -232,6 +232,8 @@ class HAMER(pl.LightningModule):
         pred_keypoints_3d = output['pred_keypoints_3d'].detach().reshape(batch_size, -1, 3)
 
         # We render the skeletons instead of the full mesh because rendering a lot of meshes will make the training slow.
+        # pred_keypoints_3d are the mano joint vertices in the wrist frame
+        #
         #predictions = self.renderer(pred_keypoints_3d[:num_images],
         #                            gt_keypoints_3d[:num_images],
         #                            2 * gt_keypoints_2d[:num_images],

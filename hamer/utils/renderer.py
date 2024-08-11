@@ -203,6 +203,7 @@ class Renderer:
             alphaMode='OPAQUE',
             baseColorFactor=(*mesh_base_color, 1.0))
 
+        # TODO: why do we have this?
         camera_translation[0] *= -1.
 
         mesh = trimesh.Trimesh(vertices.copy(), self.faces.copy())

@@ -45,6 +45,8 @@ class SkeletonRenderer:
         gt_keypoints_3d = gt_keypoints_3d.clone().cpu().float()
         gt_keypoints_3d[:, :, :-1] = gt_keypoints_3d[:, :, :-1] - gt_keypoints_3d[:, [0], :-1] + pred_keypoints_3d[:, [0]]
         gt_keypoints_2d = gt_keypoints_2d.clone().cpu().float().numpy()
+
+        # we have a +1.0 here because the 2D keypoints are approximately normalized to be between -1, +1 instead of 0.0, 1.0
         gt_keypoints_2d[:, :, :-1] = self.cfg.MODEL.IMAGE_SIZE * (gt_keypoints_2d[:, :, :-1] + 1.0) / 2.0
 
         #openpose_indices = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]

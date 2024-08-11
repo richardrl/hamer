@@ -488,8 +488,9 @@ def mano_param_processing(mano_params: Dict, has_mano_params: Dict, rot: float, 
 
 
 
-def get_example(img_path: str|np.ndarray, center_x: float, center_y: float,
-                width: float, height: float,
+# def get_example(img_path: str|np.ndarray, center_x: float, center_y: float,
+def get_example(img_path: str, center_x: float, center_y: float,
+                    width: float, height: float,
                 keypoints_2d: np.array, keypoints_3d: np.array,
                 mano_params: Dict, has_mano_params: Dict,
                 flip_kp_permutation: List[int],
@@ -621,6 +622,20 @@ def get_example(img_path: str|np.ndarray, center_x: float, center_y: float,
 
     for n_jt in range(len(keypoints_2d)):
         keypoints_2d[n_jt, 0:2] = trans_point2d(keypoints_2d[n_jt, 0:2], trans)
+
+    # this converts the XY coordinates in pixels to
+    # the XY coordinates in centimeters
+    # the camera is 2centimeters
+    # from 3D points to 2D image plane points, we use the coefficient
+    # f * image_plane_in_cm / image_plane_in_pixels
+    # u = f * 2/256 x / z
+    # so to go from x_pixels to x_cm, we need:
+    # x' = 2/256 x - 1.0
+    # because we also want to approximately zero center the keypoints
+    # assuming we multiply the points by 2.0 later, this becomes
+    # x' = 2.0(1/256 x - .5)
+    # to go from x' to x, we have:
+    # x = 1.0 + 256/2.0 x'
     keypoints_2d[:, :-1] = keypoints_2d[:, :-1] / patch_width - 0.5
 
     if not return_trans:

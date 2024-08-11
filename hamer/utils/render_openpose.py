@@ -16,6 +16,7 @@ def get_keypoints_rectangle(keypoints: np.array, threshold: float) -> Tuple[floa
     Returns:
         Tuple[float, float, float]: Rectangle width, height and area.
     """
+    assert keypoints.shape[-1] == 3
     valid_ind = keypoints[:, -1] > threshold
     if valid_ind.sum() > 0:
         valid_keypoints = keypoints[valid_ind][:, :-1]

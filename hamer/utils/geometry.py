@@ -90,10 +90,19 @@ def perspective_projection(points: torch.Tensor,
     K[:,:-1, -1] = camera_center
 
     # Transform points
+    # points: B, num_points, 3
+    # rotation: B, 3, 3
+    # -> B, num_points, 3
+    # translation: B, 3 -> B, 1, 3
+    # translation is {}^{camera} T^{wrist}
+
     points = torch.einsum('bij,bkj->bki', rotation, points)
     points = points + translation.unsqueeze(1)
 
     # Apply perspective distortion
+    # note: the z index becomes 1.0 after dividing z/z
+    # points: B, num_points, 3
+    # (denominator): B, num_points, 1
     projected_points = points / points[:,:,-1].unsqueeze(-1)
 
     # Apply camera intrinsics

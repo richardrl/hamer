@@ -12,7 +12,8 @@ from .utils import get_example, expand_to_aspect_ratio
 
 def expand(s):
     return os.path.expanduser(os.path.expandvars(s))
-def expand_urls(urls: str|List[str]):
+# def expand_urls(urls: str|List[str]):
+def expand_urls(urls: str):
     if isinstance(urls, str):
         urls = [urls]
     urls = [u for url in urls for u in braceexpand.braceexpand(expand(url))]
@@ -187,7 +188,8 @@ class ImageDataset(Dataset):
         return item
 
     @staticmethod
-    def load_tars_as_webdataset(cfg: CfgNode, urls: str|List[str], train: bool,
+    # def load_tars_as_webdataset(cfg: CfgNode, urls: str|List[str], train: bool,
+    def load_tars_as_webdataset(cfg: CfgNode, urls: str, train: bool,
             resampled=False,
             epoch_size=None,
             cache_dir=None,

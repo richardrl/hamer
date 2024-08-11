@@ -14,6 +14,7 @@ from hamer.utils.renderer import Renderer, cam_crop_to_full
 LIGHT_BLUE=(0.65098039,  0.74117647,  0.85882353)
 
 from vitpose_model import ViTPoseModel
+from hamer.utils.render_openpose import render_openpose
 
 import json
 from typing import Dict, Optional
@@ -49,6 +50,7 @@ def main():
         import hamer
         cfg_path = Path(hamer.__file__).parent/'configs'/'cascade_mask_rcnn_vitdet_h_75ep.py'
         detectron2_cfg = LazyConfig.load(str(cfg_path))
+
         detectron2_cfg.train.init_checkpoint = "https://dl.fbaipublicfiles.com/detectron2/ViTDet/COCO/cascade_mask_rcnn_vitdet_h/f328730692/model_final_f05665.pkl"
         for i in range(3):
             detectron2_cfg.model.roi_heads.box_predictors[i].test_score_thresh = 0.25
@@ -59,12 +61,13 @@ def main():
         detectron2_cfg = model_zoo.get_config('new_baselines/mask_rcnn_regnety_4gf_dds_FPN_400ep_LSJ.py', trained=True)
         detectron2_cfg.model.roi_heads.box_predictor.test_score_thresh = 0.5
         detectron2_cfg.model.roi_heads.box_predictor.test_nms_thresh   = 0.4
-        detector       = DefaultPredictor_Lazy(detectron2_cfg)
+        detector = DefaultPredictor_Lazy(detectron2_cfg)
 
     # keypoint detector
     cpm = ViTPoseModel(device)
 
     # Setup the renderer
+    # this is the PyRenderer
     renderer = Renderer(model_cfg, faces=model.mano.faces)
 
     # Make output directory if it does not exist
@@ -134,6 +137,8 @@ def main():
                 out = model(batch)
 
             multiplier = (2*batch['right']-1)
+
+            # pred_cam contains z, x, y from camera to wrist
             pred_cam = out['pred_cam']
             pred_cam[:,1] = multiplier*pred_cam[:,1]
             box_center = batch["box_center"].float()
@@ -141,7 +146,16 @@ def main():
             img_size = batch["img_size"].float()
             multiplier = (2*batch['right']-1)
             scaled_focal_length = model_cfg.EXTRA.FOCAL_LENGTH / model_cfg.MODEL.IMAGE_SIZE * img_size.max()
+
+            # TODO: what is this?
             pred_cam_t_full = cam_crop_to_full(pred_cam, box_center, box_size, img_size, scaled_focal_length).detach().cpu().numpy()
+
+            # B, num_keypoints, 2
+            pred_keypoints_2d_copy = out['pred_keypoints_2d'].detach().clone()
+            pred_keypoints_2d_copy = model.cfg.MODEL.IMAGE_SIZE * (pred_keypoints_2d_copy + 1.0) / 2.0
+
+            # -> add fake confidence score to the end
+            pred_keypoints_2d_copy = torch.cat([pred_keypoints_2d_copy, torch.ones(*pred_keypoints_2d_copy.shape, 1).to(device)])
 
             # Render the result
             batch_size = batch['img'].shape[0]
@@ -160,6 +174,12 @@ def main():
                                         scene_bg_color=(1, 1, 1),
                                         )
 
+                gt_keypoints_img = render_openpose(regression_img, pred_keypoints_2d_copy[n])
+                import pdb
+                pdb.set_trace()
+                #  / 255.
+                # let's place the 2D keypoints ontop of the regression image
+
                 if args.side_view:
                     side_img = renderer(out['pred_vertices'][n].detach().cpu().numpy(),
                                             out['pred_cam_t'][n].detach().cpu().numpy(),
@@ -176,6 +196,10 @@ def main():
                 # Add all verts and cams to list
                 verts = out['pred_vertices'][n].detach().cpu().numpy()
                 is_right = batch['right'][n].cpu().numpy()
+
+                # TODO: why do we do this
+                # if it is right hand, identity transform
+                # if it is left hand, multiply b -1. Why?
                 verts[:,0] = (2*is_right-1)*verts[:,0]
                 cam_t = pred_cam_t_full[n]
                 all_verts.append(verts)
