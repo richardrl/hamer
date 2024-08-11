@@ -152,7 +152,7 @@ def main():
 
             # B, num_keypoints, 2
             pred_keypoints_2d_copy = out['pred_keypoints_2d'].detach().clone()
-            pred_keypoints_2d_copy = model.cfg.MODEL.IMAGE_SIZE * (pred_keypoints_2d_copy + 1.0) / 2.0
+            pred_keypoints_2d_copy = model.cfg.MODEL.IMAGE_SIZE * (pred_keypoints_2d_copy + .5)
 
             # -> add fake confidence score to the end
             pred_keypoints_2d_copy = torch.cat([pred_keypoints_2d_copy, torch.ones(*pred_keypoints_2d_copy.shape[:2], 1).to(device)], dim=-1)

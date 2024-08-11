@@ -633,9 +633,17 @@ def get_example(img_path: str, center_x: float, center_y: float,
     # x' = 2/256 x - 1.0
     # because we also want to approximately zero center the keypoints
     # assuming we multiply the points by 2.0 later, this becomes
-    # x' = 2.0(1/256 x - .5)
+    # x' = 2(1/256 x - .5)
     # to go from x' to x, we have:
-    # x = 1.0 + 256/2.0 x'
+    # see hamer.py
+    # x = 256/2.0 (x' + 1.0)
+    # 2/256 x - 1.0 = 2/256 x - 2 * .5= x'
+    # 2 ( 1/256 x - .5) = x'
+
+    # now, suppose for the keypoints we never apply the 2.0
+    # then... we have,
+    # x' = 1/256 x - .5
+    # x = (x' + .5)*256
     keypoints_2d[:, :-1] = keypoints_2d[:, :-1] / patch_width - 0.5
 
     if not return_trans:
