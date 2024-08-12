@@ -21,7 +21,8 @@ from typing import Dict, Optional
 
 import copy
 import tqdm
-
+from hamer.datasets.image_dataset import FLIP_KEYPOINT_PERMUTATION
+from hamer.datasets.utils import fliplr_keypoints
 def main(args):
 
     # Download and load checkpoints
@@ -231,6 +232,9 @@ def main(args):
                 pred_kp_np[:, :2] = pred_kp_np[:, :2] - aff_t[:, 2]
 
                 pred_kp_np[:, :2] = (np.linalg.inv(aff_t[:, :2]) @ pred_kp_np[:, :2].T).T
+
+                if not batch['right'][n]:
+                    pred_kp_np = fliplr_keypoints(pred_kp_np, input_img_overlay.shape[1], FLIP_KEYPOINT_PERMUTATION)
                 input_img_overlay = render_openpose(input_img_overlay * 255., pred_kp_np) / 255.
 
             cv2.imwrite(os.path.join(args.out_folder, f'{img_fn}_all.jpg'), 255*input_img_overlay[:, :, ::-1])
