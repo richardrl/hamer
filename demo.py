@@ -19,20 +19,10 @@ from hamer.utils.render_openpose import render_openpose
 import json
 from typing import Dict, Optional
 
-def main():
-    parser = argparse.ArgumentParser(description='HaMeR demo code')
-    parser.add_argument('--checkpoint', type=str, default=DEFAULT_CHECKPOINT, help='Path to pretrained model checkpoint')
-    parser.add_argument('--img_folder', type=str, default='images', help='Folder with input images')
-    parser.add_argument('--out_folder', type=str, default='out_demo', help='Output folder to save rendered results')
-    parser.add_argument('--side_view', dest='side_view', action='store_true', default=False, help='If set, render side view also')
-    parser.add_argument('--full_frame', dest='full_frame', action='store_true', default=True, help='If set, render all people together also')
-    parser.add_argument('--save_mesh', dest='save_mesh', action='store_true', default=False, help='If set, save meshes to disk also')
-    parser.add_argument('--batch_size', type=int, default=1, help='Batch size for inference/fitting')
-    parser.add_argument('--rescale_factor', type=float, default=2.0, help='Factor for padding the bbox')
-    parser.add_argument('--body_detector', type=str, default='vitdet', choices=['vitdet', 'regnety'], help='Using regnety improves runtime and reduces memory')
-    parser.add_argument('--file_type', nargs='+', default=['*.jpg', '*.png'], help='List of file extensions to consider')
+import copy
+import tqdm
 
-    args = parser.parse_args()
+def main(args):
 
     # Download and load checkpoints
     download_models(CACHE_DIR_HAMER)
@@ -77,7 +67,7 @@ def main():
     img_paths = [img for end in args.file_type for img in Path(args.img_folder).glob(end)]
 
     # Iterate over all images in folder
-    for img_path in img_paths:
+    for img_path in tqdm.tqdm(img_paths):
         img_cv2 = cv2.imread(str(img_path))
 
         # Detect humans in image
@@ -124,6 +114,7 @@ def main():
         right = np.stack(is_right)
 
         # Run reconstruction on all detected hands
+        # we are creating a dataset for a SINGLE image
         dataset = ViTDetDataset(model_cfg, img_cv2, boxes, right, rescale_factor=args.rescale_factor)
         dataloader = torch.utils.data.DataLoader(dataset, batch_size=8, shuffle=False, num_workers=0)
 
@@ -136,6 +127,8 @@ def main():
             with torch.no_grad():
                 out = model(batch)
 
+            # new code to save hamer results
+            torch.save(out, os.path.join(args.out_folder, img_path.name.split(".jpg")[0]+ "_pred_out.torch"))
             multiplier = (2*batch['right']-1)
 
             # pred_cam contains z, x, y from camera to wrist
@@ -152,6 +145,8 @@ def main():
 
             # B, num_keypoints, 2
             pred_keypoints_2d_copy = out['pred_keypoints_2d'].detach().clone()
+
+            # converts keypoints in normalized coordinates to keypoints in pixels
             pred_keypoints_2d_copy = model.cfg.MODEL.IMAGE_SIZE * (pred_keypoints_2d_copy + .5)
 
             # -> add fake confidence score to the end
@@ -224,7 +219,47 @@ def main():
             input_img = np.concatenate([input_img, np.ones_like(input_img[:,:,:1])], axis=2) # Add alpha channel
             input_img_overlay = input_img[:,:,:3] * (1-cam_view[:,:,3:]) + cam_view[:,:,:3] * cam_view[:,:,3:]
 
+            # render the 2d keypoints on top
+            for n in range(batch_size):
+                pred_kp_np = pred_keypoints_2d_copy[n].data.cpu().numpy().copy()
+                new_kp = np.zeros_like(pred_kp_np)
+                new_kp[:, 2] = pred_keypoints_2d_copy[n].data.cpu().numpy()[:, 2]
+
+                # undo the affine transform
+                aff_t = batch['crop_trans'][n].data.cpu().numpy().copy()
+
+                pred_kp_np[:, :2] = pred_kp_np[:, :2] - aff_t[:, 2]
+
+                pred_kp_np[:, :2] = (np.linalg.inv(aff_t[:, :2]) @ pred_kp_np[:, :2].T).T
+                input_img_overlay = render_openpose(input_img_overlay * 255., pred_kp_np) / 255.
+
             cv2.imwrite(os.path.join(args.out_folder, f'{img_fn}_all.jpg'), 255*input_img_overlay[:, :, ::-1])
 
 if __name__ == '__main__':
-    main()
+
+    parser = argparse.ArgumentParser(description='HaMeR demo code')
+    parser.add_argument('--checkpoint', type=str, default=DEFAULT_CHECKPOINT, help='Path to pretrained model checkpoint')
+    parser.add_argument('--img_folder', type=str, default='images', help='Folder with input images')
+    parser.add_argument('--out_folder', type=str, default='out_demo', help='Output folder to save rendered results')
+    parser.add_argument('--side_view', dest='side_view', action='store_true', default=False, help='If set, render side view also. This is a rotated view of the hand with white background.')
+    parser.add_argument('--full_frame', dest='full_frame', action='store_true', default=True, help='If set, render all people together also')
+    parser.add_argument('--save_mesh', dest='save_mesh', action='store_true', default=False, help='If set, save meshes to disk also')
+    parser.add_argument('--batch_size', type=int, default=1, help='Batch size for inference/fitting')
+    parser.add_argument('--rescale_factor', type=float, default=2.0, help='Factor for padding the bbox')
+    parser.add_argument('--body_detector', type=str, default='vitdet', choices=['vitdet', 'regnety'], help='Using regnety improves runtime and reduces memory')
+    parser.add_argument('--file_type', nargs='+', default=['*.jpg', '*.png'], help='List of file extensions to consider')
+    parser.add_argument("--meta_folder", type=str, help="Folder containing folders, to be run in sequence")
+
+    args = parser.parse_args()
+
+
+    if args.meta_folder:
+        directories = next(os.walk(args.meta_folder))[1]
+
+        for directory in tqdm.tqdm(directories):
+            new_args = copy.deepcopy(args)
+            new_args.img_folder = os.path.join(args.meta_folder, directory)
+            new_args.out_folder = os.path.join("demo_out", os.path.basename(args.meta_folder.rstrip("/")), directory)
+            main(new_args)
+    else:
+        main(args)

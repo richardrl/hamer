@@ -45,7 +45,6 @@ class ViTDetDataset(torch.utils.data.Dataset):
         return len(self.personid)
 
     def __getitem__(self, idx: int) -> Dict[str, np.array]:
-
         center = self.center[idx].copy()
         center_x = center[0]
         center_y = center[1]
@@ -65,7 +64,7 @@ class ViTDetDataset(torch.utils.data.Dataset):
         if True:
             # Blur image to avoid aliasing artifacts
             downsampling_factor = ((bbox_size*1.0) / patch_width)
-            print(f'{downsampling_factor=}')
+            # print(f'{downsampling_factor=}')
             downsampling_factor = downsampling_factor / 2.0
             if downsampling_factor > 1.1:
                 cvimg  = gaussian(cvimg, sigma=(downsampling_factor-1)/2, channel_axis=2, preserve_range=True)
@@ -92,4 +91,5 @@ class ViTDetDataset(torch.utils.data.Dataset):
         item['box_size'] = bbox_size
         item['img_size'] = 1.0 * np.array([cvimg.shape[1], cvimg.shape[0]])
         item['right'] = self.right[idx].copy()
+        item['crop_trans'] = trans.copy()
         return item
