@@ -6,7 +6,8 @@ import cv2
 import numpy as np
 
 from hamer.configs import CACHE_DIR_HAMER
-from hamer.models import HAMER, download_models, load_hamer, DEFAULT_CHECKPOINT
+from hamer.hamer.datasets.utils import extract_ego4d_frame_index
+from hamer.models import download_models, load_hamer, DEFAULT_CHECKPOINT
 from hamer.utils import recursive_to
 from hamer.datasets.vitdet_dataset import ViTDetDataset, DEFAULT_MEAN, DEFAULT_STD
 from hamer.utils.renderer import Renderer, cam_crop_to_full
@@ -15,9 +16,6 @@ LIGHT_BLUE=(0.65098039,  0.74117647,  0.85882353)
 
 from vitpose_model import ViTPoseModel
 from hamer.utils.render_openpose import render_openpose
-
-import json
-from typing import Dict, Optional
 
 import copy
 import tqdm
@@ -50,7 +48,6 @@ def main(args):
         detector = DefaultPredictor_Lazy(detectron2_cfg)
     elif args.body_detector == 'regnety':
         from detectron2 import model_zoo
-        from detectron2.config import get_cfg
         detectron2_cfg = model_zoo.get_config('new_baselines/mask_rcnn_regnety_4gf_dds_FPN_400ep_LSJ.py', trained=True)
         detectron2_cfg.model.roi_heads.box_predictor.test_score_thresh = 0.5
         detectron2_cfg.model.roi_heads.box_predictor.test_nms_thresh   = 0.4
@@ -68,11 +65,7 @@ def main(args):
 
     # Get all demo images ends with .jpg or .png
 
-    import re
-    def extract_index(path):
-        return int(str(path).split(".jpg")[0].rsplit("_")[-1])
-
-    img_paths = sorted([img for end in args.file_type for img in Path(args.img_folder).glob(end)], key=extract_index)
+    img_paths = sorted([img for end in args.file_type for img in Path(args.img_folder).glob(end)], key=extract_ego4d_frame_index)
 
     # Iterate over all images in folder
     for img_path in tqdm.tqdm(img_paths):
@@ -123,6 +116,7 @@ def main(args):
         right = np.stack(is_right)
 
         if args.filter_camera_wearer:
+            # TODO: fix this... this is pretty bad
             def get_area_from_bbox(bbox):
                 return (bbox[2] - bbox[0]) * (bbox[3] - bbox[1])
             new_boxes = []
@@ -297,7 +291,7 @@ if __name__ == '__main__':
 
     parser.add_argument("--filter_camera_wearer", help="Whether or not to take top two hand bounding boxes (ignoring the other two)")
     parser.add_argument("--no_filter_camera_wearer", dest="filter_camera_wearer", action="store_false")
-    parser.set_defaults(filter_camera_wearer=True)
+    parser.set_defaults(filter_camera_wearer=False)
 
     parser.add_argument("--render")
     parser.add_argument("--no_render", dest="render", action="store_false")

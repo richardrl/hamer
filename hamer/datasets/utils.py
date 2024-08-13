@@ -1014,3 +1014,7 @@ def extreme_cropping_aggressive(center_x: float, center_y: float, width: float, 
         else:
             center_x, center_y, width, height = crop_leftarm_only(center_x, center_y, width, height, keypoints_2d)
     return center_x, center_y, max(width, height), max(width, height)
+
+
+def extract_ego4d_frame_index(path):
+    return int(str(path).split(".jpg")[0].rsplit("_")[-1])
