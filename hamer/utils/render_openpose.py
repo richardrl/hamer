@@ -143,7 +143,8 @@ def render_body_keypoints(img: np.array,
         (np.array): Image of shape (H, W, 3) with keypoints drawn on top of the original image. 
     """
 
-    thickness_circle_ratio = 1./75. * np.ones(body_keypoints.shape[0])
+    # .25 to make the circles smaller because images are smaller at 320x240
+    thickness_circle_ratio = 1./75. * np.ones(body_keypoints.shape[0]) * .25
     thickness_line_ratio_wrt_circle = 0.75
     pairs = []
     pairs = [1,8,1,2,1,5,2,3,3,4,5,6,6,7,8,9,9,10,10,11,8,12,12,13,13,14,1,0,0,15,15,17,0,16,16,18,14,19,19,20,14,21,11,22,22,23,11,24]

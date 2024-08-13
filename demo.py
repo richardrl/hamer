@@ -23,6 +23,8 @@ import copy
 import tqdm
 from hamer.datasets.image_dataset import FLIP_KEYPOINT_PERMUTATION
 from hamer.datasets.utils import fliplr_keypoints
+import time
+
 def main(args):
 
     # Download and load checkpoints
@@ -65,7 +67,12 @@ def main(args):
     os.makedirs(args.out_folder, exist_ok=True)
 
     # Get all demo images ends with .jpg or .png
-    img_paths = [img for end in args.file_type for img in Path(args.img_folder).glob(end)]
+
+    import re
+    def extract_index(path):
+        return int(str(path).split(".jpg")[0].rsplit("_")[-1])
+
+    img_paths = sorted([img for end in args.file_type for img in Path(args.img_folder).glob(end)], key=extract_index)
 
     # Iterate over all images in folder
     for img_path in tqdm.tqdm(img_paths):
@@ -111,8 +118,39 @@ def main(args):
         if len(bboxes) == 0:
             continue
 
+
         boxes = np.stack(bboxes)
         right = np.stack(is_right)
+
+        if args.filter_camera_wearer:
+            def get_area_from_bbox(bbox):
+                return (bbox[2] - bbox[0]) * (bbox[3] - bbox[1])
+            new_boxes = []
+            new_right = []
+
+            # if we have multiple copies of a hand, pick the ones with biggest bounding boxes to associate with the camera wearer
+            found_left = np.count_nonzero(right == 0)
+            found_right = np.count_nonzero(right == 1)
+
+            if found_left > 0:
+                left_boxes = [boxes[_] for _ in np.nonzero(right == 0)[0]]
+                left_areas = [get_area_from_bbox(_) for _ in left_boxes]
+                left_selected_box = left_boxes[np.argmax(left_areas)]
+                new_boxes.append(left_selected_box)
+                new_right.append(0)
+
+            if found_right > 0:
+                right_boxes = [boxes[_] for _ in np.nonzero(right == 1)[0]]
+                right_areas = [get_area_from_bbox(_) for _ in right_boxes]
+                right_selected_box = right_boxes[np.argmax(right_areas)]
+                new_boxes.append(right_selected_box)
+                new_right.append(1)
+
+            boxes = np.stack(new_boxes)
+            right = np.stack(new_right)
+
+            assert len(boxes) <= 2
+            assert len(right) <= 2
 
         # Run reconstruction on all detected hands
         # we are creating a dataset for a SINGLE image
@@ -126,7 +164,9 @@ def main(args):
         for batch in dataloader:
             batch = recursive_to(batch, device)
             with torch.no_grad():
+                t0 = time.time()
                 out = model(batch)
+                tqdm.tqdm.write(f"{time.time() -t0} forward pass time")
 
             # new code to save hamer results
             torch.save(out, os.path.join(args.out_folder, img_path.name.split(".jpg")[0]+ "_pred_out.torch"))
@@ -153,61 +193,62 @@ def main(args):
             # -> add fake confidence score to the end
             pred_keypoints_2d_copy = torch.cat([pred_keypoints_2d_copy, torch.ones(*pred_keypoints_2d_copy.shape[:2], 1).to(device)], dim=-1)
 
-            # Render the result
-            batch_size = batch['img'].shape[0]
-            for n in range(batch_size):
-                # Get filename from path img_path
-                img_fn, _ = os.path.splitext(os.path.basename(img_path))
-                person_id = int(batch['personid'][n])
-                white_img = (torch.ones_like(batch['img'][n]).cpu() - DEFAULT_MEAN[:,None,None]/255) / (DEFAULT_STD[:,None,None]/255)
-                input_patch = batch['img'][n].cpu() * (DEFAULT_STD[:,None,None]/255) + (DEFAULT_MEAN[:,None,None]/255)
-                input_patch = input_patch.permute(1,2,0).numpy()
+            if args.render:
+                # Render the result
+                batch_size = batch['img'].shape[0]
+                for n in range(batch_size):
+                    # Get filename from path img_path
+                    img_fn, _ = os.path.splitext(os.path.basename(img_path))
+                    person_id = int(batch['personid'][n])
+                    white_img = (torch.ones_like(batch['img'][n]).cpu() - DEFAULT_MEAN[:,None,None]/255) / (DEFAULT_STD[:,None,None]/255)
+                    input_patch = batch['img'][n].cpu() * (DEFAULT_STD[:,None,None]/255) + (DEFAULT_MEAN[:,None,None]/255)
+                    input_patch = input_patch.permute(1,2,0).numpy()
 
-                regression_img = renderer(out['pred_vertices'][n].detach().cpu().numpy(),
-                                        out['pred_cam_t'][n].detach().cpu().numpy(),
-                                        batch['img'][n],
-                                        mesh_base_color=LIGHT_BLUE,
-                                        scene_bg_color=(1, 1, 1),
-                                        )
-                # -> H?, W?, 3
-                # pick out all
-                regression_img = render_openpose(regression_img * 255., pred_keypoints_2d_copy[n].data.cpu().numpy()) / 255.
-                # let's place the 2D keypoints ontop of the regression image
-
-                if args.side_view:
-                    side_img = renderer(out['pred_vertices'][n].detach().cpu().numpy(),
+                    regression_img = renderer(out['pred_vertices'][n].detach().cpu().numpy(),
                                             out['pred_cam_t'][n].detach().cpu().numpy(),
-                                            white_img,
+                                            batch['img'][n],
                                             mesh_base_color=LIGHT_BLUE,
                                             scene_bg_color=(1, 1, 1),
-                                            side_view=True)
-                    final_img = np.concatenate([input_patch, regression_img, side_img], axis=1)
-                else:
-                    final_img = np.concatenate([input_patch, regression_img], axis=1)
+                                            )
+                    # -> H?, W?, 3
+                    # pick out all
+                    regression_img = render_openpose(regression_img * 255., pred_keypoints_2d_copy[n].data.cpu().numpy()) / 255.
+                    # let's place the 2D keypoints ontop of the regression image
 
-                cv2.imwrite(os.path.join(args.out_folder, f'{img_fn}_{person_id}.png'), 255*final_img[:, :, ::-1])
+                    if args.side_view:
+                        side_img = renderer(out['pred_vertices'][n].detach().cpu().numpy(),
+                                                out['pred_cam_t'][n].detach().cpu().numpy(),
+                                                white_img,
+                                                mesh_base_color=LIGHT_BLUE,
+                                                scene_bg_color=(1, 1, 1),
+                                                side_view=True)
+                        final_img = np.concatenate([input_patch, regression_img, side_img], axis=1)
+                    else:
+                        final_img = np.concatenate([input_patch, regression_img], axis=1)
 
-                # Add all verts and cams to list
-                verts = out['pred_vertices'][n].detach().cpu().numpy()
-                is_right = batch['right'][n].cpu().numpy()
+                    cv2.imwrite(os.path.join(args.out_folder, f'{img_fn}_{person_id}.png'), 255*final_img[:, :, ::-1])
 
-                # TODO: why do we do this
-                # if it is right hand, identity transform
-                # if it is left hand, multiply b -1. Why?
-                verts[:,0] = (2*is_right-1)*verts[:,0]
-                cam_t = pred_cam_t_full[n]
-                all_verts.append(verts)
-                all_cam_t.append(cam_t)
-                all_right.append(is_right)
+                    # Add all verts and cams to list
+                    verts = out['pred_vertices'][n].detach().cpu().numpy()
+                    is_right = batch['right'][n].cpu().numpy()
 
-                # Save all meshes to disk
-                if args.save_mesh:
-                    camera_translation = cam_t.copy()
-                    tmesh = renderer.vertices_to_trimesh(verts, camera_translation, LIGHT_BLUE, is_right=is_right)
-                    tmesh.export(os.path.join(args.out_folder, f'{img_fn}_{person_id}.obj'))
+                    # TODO: why do we do this
+                    # if it is right hand, identity transform
+                    # if it is left hand, multiply b -1. Why?
+                    verts[:,0] = (2*is_right-1)*verts[:,0]
+                    cam_t = pred_cam_t_full[n]
+                    all_verts.append(verts)
+                    all_cam_t.append(cam_t)
+                    all_right.append(is_right)
+
+                    # Save all meshes to disk
+                    if args.save_mesh:
+                        camera_translation = cam_t.copy()
+                        tmesh = renderer.vertices_to_trimesh(verts, camera_translation, LIGHT_BLUE, is_right=is_right)
+                        tmesh.export(os.path.join(args.out_folder, f'{img_fn}_{person_id}.obj'))
 
         # Render front view
-        if args.full_frame and len(all_verts) > 0:
+        if args.render and args.full_frame and len(all_verts) > 0:
             misc_args = dict(
                 mesh_base_color=LIGHT_BLUE,
                 scene_bg_color=(1, 1, 1),
@@ -253,6 +294,14 @@ if __name__ == '__main__':
     parser.add_argument('--body_detector', type=str, default='vitdet', choices=['vitdet', 'regnety'], help='Using regnety improves runtime and reduces memory')
     parser.add_argument('--file_type', nargs='+', default=['*.jpg', '*.png'], help='List of file extensions to consider')
     parser.add_argument("--meta_folder", type=str, help="Folder containing folders, to be run in sequence")
+
+    parser.add_argument("--filter_camera_wearer", help="Whether or not to take top two hand bounding boxes (ignoring the other two)")
+    parser.add_argument("--no_filter_camera_wearer", dest="filter_camera_wearer", action="store_false")
+    parser.set_defaults(filter_camera_wearer=True)
+
+    parser.add_argument("--render")
+    parser.add_argument("--no_render", dest="render", action="store_false")
+    parser.set_defaults(render=False)
 
     args = parser.parse_args()
 
