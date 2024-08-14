@@ -35,11 +35,13 @@ class ViTDetDataset(torch.utils.data.Dataset):
         self.std = 255. * np.array(self.cfg.MODEL.IMAGE_STD)
 
         # Preprocess annotations
+        # -> num_hands, 4
         boxes = boxes.astype(np.float32)
         self.center = (boxes[:, 2:4] + boxes[:, 0:2]) / 2.0
         self.scale = rescale_factor * (boxes[:, 2:4] - boxes[:, 0:2]) / 200.0
         self.personid = np.arange(len(boxes), dtype=np.int32)
         self.right = right.astype(np.float32)
+        self.boxes = boxes
 
     def __len__(self) -> int:
         return len(self.personid)
@@ -92,4 +94,5 @@ class ViTDetDataset(torch.utils.data.Dataset):
         item['img_size'] = 1.0 * np.array([cvimg.shape[1], cvimg.shape[0]])
         item['right'] = self.right[idx].copy()
         item['crop_trans'] = trans.copy()
+        item['boxes'] = self.boxes[idx].copy()
         return item

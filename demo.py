@@ -1,3 +1,6 @@
+# generate data
+# python demo.py --out_folder /data/scratch-oc40/pulkitag/rli14/hamer_diffusion_policy/hamer/demo_out/0812_single_vid_two_people_test --batch_size=6 --meta_folder=/data/pulkitag/models/rli14/data/ego4d_fho/v1/0812_single_vid_two_people_test
+
 from pathlib import Path
 import torch
 import argparse
@@ -6,7 +9,7 @@ import cv2
 import numpy as np
 
 from hamer.configs import CACHE_DIR_HAMER
-from hamer.hamer.datasets.utils import extract_ego4d_frame_index
+from hamer.datasets.utils import extract_ego4d_rgb_frame_index
 from hamer.models import download_models, load_hamer, DEFAULT_CHECKPOINT
 from hamer.utils import recursive_to
 from hamer.datasets.vitdet_dataset import ViTDetDataset, DEFAULT_MEAN, DEFAULT_STD
@@ -65,14 +68,16 @@ def main(args):
 
     # Get all demo images ends with .jpg or .png
 
-    img_paths = sorted([img for end in args.file_type for img in Path(args.img_folder).glob(end)], key=extract_ego4d_frame_index)
+    img_paths = sorted([img for end in args.file_type for img in Path(args.img_folder).glob(end)], key=extract_ego4d_rgb_frame_index)
 
     # Iterate over all images in folder
     for img_path in tqdm.tqdm(img_paths):
         img_cv2 = cv2.imread(str(img_path))
 
         # Detect humans in image
+        t0 = time.time()
         det_out = detector(img_cv2)
+        print(f"detectron time: {time.time() - t0}")
         img = img_cv2.copy()[:, :, ::-1]
 
         det_instances = det_out['instances']
@@ -154,8 +159,11 @@ def main(args):
         all_verts = []
         all_cam_t = []
         all_right = []
-        
-        for batch in dataloader:
+
+        # dataloader is over all the boxes
+        for batch_idx, batch in enumerate(dataloader):
+            # we should not detect more than batch size hands
+            assert batch_idx < 1, batch_idx
             batch = recursive_to(batch, device)
             with torch.no_grad():
                 t0 = time.time()
@@ -163,7 +171,12 @@ def main(args):
                 tqdm.tqdm.write(f"{time.time() -t0} forward pass time")
 
             # new code to save hamer results
-            torch.save(out, os.path.join(args.out_folder, img_path.name.split(".jpg")[0]+ "_pred_out.torch"))
+            out.update({"right": batch['right'],
+                        "boxes": batch})
+
+            # save all label data
+            torch.save(out, os.path.join(args.out_folder, img_path.name.split(".jpg")[0]+ "_label.torch"))
+
             multiplier = (2*batch['right']-1)
 
             # pred_cam contains z, x, y from camera to wrist

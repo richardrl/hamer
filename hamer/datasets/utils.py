@@ -1016,5 +1016,8 @@ def extreme_cropping_aggressive(center_x: float, center_y: float, width: float, 
     return center_x, center_y, max(width, height), max(width, height)
 
 
-def extract_ego4d_frame_index(path):
+def extract_ego4d_rgb_frame_index(path):
     return int(str(path).split(".jpg")[0].rsplit("_")[-1])
+
+def extract_ego4d_label_index(path):
+    return int(str(path).split("_pred_out.torch")[0].rsplit("_")[-1])
