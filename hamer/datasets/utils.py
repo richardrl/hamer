@@ -11,6 +11,7 @@ import cv2
 from typing import List, Dict, Tuple
 from yacs.config import CfgNode
 
+
 def expand_to_aspect_ratio(input_shape, target_aspect_ratio=None):
     """Increase the size of the bounding box to match the target shape."""
     if target_aspect_ratio is None:
@@ -418,7 +419,10 @@ def fliplr_keypoints(joints: np.array, width: float, flip_permutation: List[int]
     Returns:
         np.array: Flipped 2D or 3D keypoints with shape (N, 3) or (N, 4) respectively.
     """
-    joints = joints.copy()
+    if isinstance(joints, torch.Tensor):
+        joints = joints.detach().clone()
+    else:
+        joints = joints.copy()
     # Flip horizontal
     joints[:, 0] = width - joints[:, 0] - 1
     joints = joints[flip_permutation, :]
@@ -1016,8 +1020,3 @@ def extreme_cropping_aggressive(center_x: float, center_y: float, width: float, 
     return center_x, center_y, max(width, height), max(width, height)
 
 
-def extract_ego4d_rgb_frame_index(path):
-    return int(str(path).split(".jpg")[0].rsplit("_")[-1])
-
-def extract_ego4d_label_index(path):
-    return int(str(path).split("_pred_out.torch")[0].rsplit("_")[-1])

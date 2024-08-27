@@ -9,7 +9,8 @@ import cv2
 import numpy as np
 
 from hamer.configs import CACHE_DIR_HAMER
-from hamer.datasets.utils import extract_ego4d_rgb_frame_index
+# from dataset.ego4d_utils import extract_ego4d_rgb_frame_index
+from hamer.utils.utils_detectron2 import get_area_from_bbox
 from hamer.models import download_models, load_hamer, DEFAULT_CHECKPOINT
 from hamer.utils import recursive_to
 from hamer.datasets.vitdet_dataset import ViTDetDataset, DEFAULT_MEAN, DEFAULT_STD
@@ -25,6 +26,51 @@ import tqdm
 from hamer.datasets.image_dataset import FLIP_KEYPOINT_PERMUTATION
 from hamer.datasets.utils import fliplr_keypoints
 import time
+
+import os
+from tqdm.utils import _unicode, disp_len
+import sys
+
+_TQDM_STATUS_EVERY_N = 2
+
+if "SLURM_JOB_ID" in os.environ:
+    def status_printer(self, file):
+        """
+        Manage the printing and in-place updating of a line of characters.
+        Note that if the string is longer than a line, then in-place
+        updating may not work (it will print a new line at each refresh).
+        """
+        self._status_printer_counter = 0
+        fp = file
+        fp_flush = getattr(fp, 'flush', lambda: None)  # pragma: no cover
+        if fp in (sys.stderr, sys.stdout):
+            getattr(sys.stderr, 'flush', lambda: None)()
+            getattr(sys.stdout, 'flush', lambda: None)()
+
+        def fp_write(s):
+            fp.write(_unicode(s))
+            fp_flush()
+
+        last_len = [0]
+
+        def print_status(s):
+            self._status_printer_counter += 1
+            if self._status_printer_counter % _TQDM_STATUS_EVERY_N == 0:
+                len_s = disp_len(s)
+                # This is where we've removed the \r for clearer output
+                fp_write(s + (' ' * max(last_len[0] - len_s, 0)) + '\n')
+                last_len[0] = len_s
+        return print_status
+    tqdm.tqdm.status_printer = status_printer
+
+def extract_ego4d_label_index(path):
+    # return int(str(path).split("_pred_out.torch")[0].rsplit("_")[-1])
+    return int(str(path).split("_label.torch")[0].rsplit("_")[-1])
+
+
+def extract_ego4d_rgb_frame_index(path):
+    return int(str(path).split(".jpg")[0].rsplit("_")[-1])
+
 
 def main(args):
 
@@ -70,14 +116,45 @@ def main(args):
 
     img_paths = sorted([img for end in args.file_type for img in Path(args.img_folder).glob(end)], key=extract_ego4d_rgb_frame_index)
 
+    if args.out_folder:
+        import glob
+        import pathlib
+        # scan the image folder for already generated labels, and skip those imgs apths
+        print("Only regenerating clip folders we don't have...")
+        label_filepaths = glob.glob(os.path.join(args.out_folder, '*_label.torch'))
+        label_idxs = [extract_ego4d_label_index(path_str) for path_str in label_filepaths]
+        label_set = set(label_idxs)
+
+        img_idxs = [extract_ego4d_rgb_frame_index(path_str) for path_str in img_paths]
+        img_set = set(img_idxs)
+
+        # only run our code on images that don't have a label
+        img_paths = [pathlib.Path(os.path.join(args.img_folder, os.path.basename(args.img_folder.rstrip("/")) + f"_{img_idx:010d}") + ".jpg") for img_idx in (img_set - label_set)]
+
+        # print("ln98 img paths")
+        # print(img_paths)
+        print("ln100 img folder")
+        print(args.img_folder)
+        assert len(img_paths) > 0
+
     # Iterate over all images in folder
     for img_path in tqdm.tqdm(img_paths):
+        print(f"img_path: {img_path}")
+        t0 = time.time()
         img_cv2 = cv2.imread(str(img_path))
+        print(f"ln103 img load time {time.time() - t0}")
 
         # Detect humans in image
         t0 = time.time()
+        # try:
         det_out = detector(img_cv2)
-        print(f"detectron time: {time.time() - t0}")
+        # except:
+        #     print("img load failed")
+        #     print(img_path)
+        tqdm.tqdm.write(f"detectron time: {time.time() - t0}")
+        # print(f"detectron time: {time.time() - t0}")
+
+        # convert bgr to rgb before passing into models
         img = img_cv2.copy()[:, :, ::-1]
 
         det_instances = det_out['instances']
@@ -86,10 +163,12 @@ def main(args):
         pred_scores=det_instances.scores[valid_idx].cpu().numpy()
 
         # Detect human keypoints for each person
+        t0 = time.time()
         vitposes_out = cpm.predict_pose(
             img,
             [np.concatenate([pred_bboxes, pred_scores[:, None]], axis=1)],
         )
+        print(f"vit pose time: {time.time() - t0}")
 
         bboxes = []
         is_right = []
@@ -114,6 +193,7 @@ def main(args):
                 is_right.append(1)
 
         if len(bboxes) == 0:
+            print("Found 0 bbox, skipping...")
             continue
 
 
@@ -122,8 +202,6 @@ def main(args):
 
         if args.filter_camera_wearer:
             # TODO: fix this... this is pretty bad
-            def get_area_from_bbox(bbox):
-                return (bbox[2] - bbox[0]) * (bbox[3] - bbox[1])
             new_boxes = []
             new_right = []
 
@@ -161,9 +239,43 @@ def main(args):
         all_right = []
 
         # dataloader is over all the boxes
+
+        # we should not have more than one batch, or else the code needs updating...
+        # TODO: update the code so we collect all the metadata over the entire dataloader and save label torch one time per img
+        # some images have way more than 3 people, so can go over the batch size...
+        # TODO: combine batches
+        # for now, since we just skip batches anyway, doesn't matter
+        # assert len(dataloader) == 1, len(dataloader)
+
+        total_out_dict = dict()
+
+        def combine_tensor_dict(new_dict, master_dict):
+            """
+            new dicts which have tensors or dicts of tensors
+
+            concatenate things along the batch dimension
+            """
+            assert new_dict.keys() == master_dict.keys()
+
+            for k, v in new_dict.items():
+                if isinstance(v, torch.Tensor):
+                    if k in master_dict.keys():
+                        # concatenate along batch dimension
+                        # -> b1 + b2, ...
+                        master_dict[k] = torch.cat([master_dict[k], v.detach().clone()], axis=0)
+                    else:
+                        master_dict[k] = v.detach().clone()
+                else:
+                    assert isinstance(v, dict)
+
+                    if k in master_dict.keys():
+                        combine_tensor_dict(v, master_dict[k])
+                    else:
+                        master_dict[k] = {kp: vp.detach().clone() for kp, vp in v.items()}
+
         for batch_idx, batch in enumerate(dataloader):
             # we should not detect more than batch size hands
-            assert batch_idx < 1, batch_idx
+            # assert batch_idx < 1, batch_idx
             batch = recursive_to(batch, device)
             with torch.no_grad():
                 t0 = time.time()
@@ -171,11 +283,15 @@ def main(args):
                 tqdm.tqdm.write(f"{time.time() -t0} forward pass time")
 
             # new code to save hamer results
-            out.update({"right": batch['right'],
-                        "boxes": batch})
+            # out.update({"right": batch['right'],
+            #             "boxes": batch['boxes']})
+            # get everything except img patch
+            # TODO: this only works because the batch contains everything
+            out.update({k: v for k, v in batch.items() if k != "img"})
 
-            # save all label data
-            torch.save(out, os.path.join(args.out_folder, img_path.name.split(".jpg")[0]+ "_label.torch"))
+            # each out only has tensors....
+            # or dict of tensors
+            combine_tensor_dict(out, total_out_dict)
 
             multiplier = (2*batch['right']-1)
 
@@ -211,6 +327,7 @@ def main(args):
                     input_patch = batch['img'][n].cpu() * (DEFAULT_STD[:,None,None]/255) + (DEFAULT_MEAN[:,None,None]/255)
                     input_patch = input_patch.permute(1,2,0).numpy()
 
+                    # produces rgb image
                     regression_img = renderer(out['pred_vertices'][n].detach().cpu().numpy(),
                                             out['pred_cam_t'][n].detach().cpu().numpy(),
                                             batch['img'][n],
@@ -233,6 +350,7 @@ def main(args):
                     else:
                         final_img = np.concatenate([input_patch, regression_img], axis=1)
 
+                    # convert rgb back to bgr
                     cv2.imwrite(os.path.join(args.out_folder, f'{img_fn}_{person_id}.png'), 255*final_img[:, :, ::-1])
 
                     # Add all verts and cams to list
@@ -254,6 +372,13 @@ def main(args):
                         tmesh = renderer.vertices_to_trimesh(verts, camera_translation, LIGHT_BLUE, is_right=is_right)
                         tmesh.export(os.path.join(args.out_folder, f'{img_fn}_{person_id}.obj'))
 
+        # save all label data
+        label_save_path =  os.path.join(args.out_folder, img_path.name.split(".jpg")[0]+ "_label.torch")
+        torch.save(total_out_dict, label_save_path)
+
+        tqdm.tqdm.write(f"Saving: {label_save_path}")
+        time.sleep(.001)
+
         # Render front view
         if args.render and args.full_frame and len(all_verts) > 0:
             misc_args = dict(
@@ -271,8 +396,6 @@ def main(args):
             # render the 2d keypoints on top
             for n in range(batch_size):
                 pred_kp_np = pred_keypoints_2d_copy[n].data.cpu().numpy().copy()
-                new_kp = np.zeros_like(pred_kp_np)
-                new_kp[:, 2] = pred_keypoints_2d_copy[n].data.cpu().numpy()[:, 2]
 
                 # undo the affine transform
                 aff_t = batch['crop_trans'][n].data.cpu().numpy().copy()
@@ -286,13 +409,14 @@ def main(args):
                 input_img_overlay = render_openpose(input_img_overlay * 255., pred_kp_np) / 255.
 
             cv2.imwrite(os.path.join(args.out_folder, f'{img_fn}_all.jpg'), 255*input_img_overlay[:, :, ::-1])
+    print("ln327: demo complete! Predicted hands for all images in the img paths.")
+
 
 if __name__ == '__main__':
-
     parser = argparse.ArgumentParser(description='HaMeR demo code')
     parser.add_argument('--checkpoint', type=str, default=DEFAULT_CHECKPOINT, help='Path to pretrained model checkpoint')
     parser.add_argument('--img_folder', type=str, default='images', help='Folder with input images')
-    parser.add_argument('--out_folder', type=str, default='out_demo', help='Output folder to save rendered results')
+    parser.add_argument('--out_folder', type=str, default='demo_out', help='Output folder to save rendered results. When passing in a meta folder, this out folder is associated with a clip folder.')
     parser.add_argument('--side_view', dest='side_view', action='store_true', default=False, help='If set, render side view also. This is a rotated view of the hand with white background.')
     parser.add_argument('--full_frame', dest='full_frame', action='store_true', default=True, help='If set, render all people together also')
     parser.add_argument('--save_mesh', dest='save_mesh', action='store_true', default=False, help='If set, save meshes to disk also')
@@ -300,7 +424,7 @@ if __name__ == '__main__':
     parser.add_argument('--rescale_factor', type=float, default=2.0, help='Factor for padding the bbox')
     parser.add_argument('--body_detector', type=str, default='vitdet', choices=['vitdet', 'regnety'], help='Using regnety improves runtime and reduces memory')
     parser.add_argument('--file_type', nargs='+', default=['*.jpg', '*.png'], help='List of file extensions to consider')
-    parser.add_argument("--meta_folder", type=str, help="Folder containing folders, to be run in sequence")
+    parser.add_argument("--meta_folder", type=str, help="Folder containing clip folders, to be run in sequence")
 
     parser.add_argument("--filter_camera_wearer", help="Whether or not to take top two hand bounding boxes (ignoring the other two)")
     parser.add_argument("--no_filter_camera_wearer", dest="filter_camera_wearer", action="store_false")
@@ -308,18 +432,35 @@ if __name__ == '__main__':
 
     parser.add_argument("--render")
     parser.add_argument("--no_render", dest="render", action="store_false")
+    parser.add_argument("--mp_idx", type=int, help="An index to use for multiprocessing.")
+    parser.add_argument("--mp_total", type=int, help="Total number of jobs to use for multiprocessing")
     parser.set_defaults(render=False)
 
     args = parser.parse_args()
 
-
     if args.meta_folder:
-        directories = next(os.walk(args.meta_folder))[1]
+        # only get chilidren of the meta folder directory
+        directories = sorted(next(os.walk(args.meta_folder))[1])
 
+        import math
+
+        if args.mp_idx:
+            assert args.mp_total
+            # split the img paths to be distributed amongst all the different slurm jobs
+            # TODO: check this more carefully
+            start_img_path_idx = math.floor((len(directories) / args.mp_total) * args.mp_idx)
+
+            end_img_path_idx = math.floor((len(directories) / args.mp_total) * (args.mp_idx + 1))
+
+            directories = directories[start_img_path_idx:end_img_path_idx]
+
+        print("ln381 directories")
+        print(directories)
         for directory in tqdm.tqdm(directories):
             new_args = copy.deepcopy(args)
             new_args.img_folder = os.path.join(args.meta_folder, directory)
-            new_args.out_folder = os.path.join("demo_out", os.path.basename(args.meta_folder.rstrip("/")), directory)
+            # new_args.out_folder = os.path.join(args.out_folder, os.path.basename(args.meta_folder.rstrip("/")), directory)
+            new_args.out_folder = os.path.join(args.out_folder, directory)
             main(new_args)
     else:
         main(args)

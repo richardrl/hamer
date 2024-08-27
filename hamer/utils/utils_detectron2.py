@@ -91,3 +91,7 @@ class DefaultPredictor_Lazy:
             inputs = {"image": image, "height": height, "width": width}
             predictions = self.model([inputs])[0]
             return predictions
+
+
+def get_area_from_bbox(bbox):
+    return (bbox[2] - bbox[0]) * (bbox[3] - bbox[1])
