@@ -19,8 +19,6 @@ def expand_urls(urls: str):
     urls = [u for url in urls for u in braceexpand.braceexpand(expand(url))]
     return urls
 
-FLIP_KEYPOINT_PERMUTATION = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
-
 DEFAULT_MEAN = 255. * np.array([0.485, 0.456, 0.406])
 DEFAULT_STD = 255. * np.array([0.229, 0.224, 0.225])
 DEFAULT_IMG_SIZE = 256

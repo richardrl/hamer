@@ -92,7 +92,7 @@ def render_keypoints(img: np.array,
                 cv2.circle(img, tuple(center.tolist()), radiusScaled, tuple(color.tolist()), thicknessCircleScaled, lineType, shift)
     return img
 
-def render_hand_keypoints(img, right_hand_keypoints, threshold=0.1, use_confidence=False, map_fn=lambda x: np.ones_like(x), alpha=1.0):
+def render_hand_keypoints(img, right_hand_keypoints, threshold=0.1, use_confidence=False, map_fn=lambda x: np.ones_like(x), alpha=1.0, uniform_color=None):
     if use_confidence and map_fn is not None:
         #thicknessCircleRatioLeft = 1./50 * map_fn(left_hand_keypoints[:, -1])
         thicknessCircleRatioRight = 1./50 * map_fn(right_hand_keypoints[:, -1])
@@ -103,27 +103,30 @@ def render_hand_keypoints(img, right_hand_keypoints, threshold=0.1, use_confiden
     pairs = [0,1,  1,2,  2,3,  3,4,  0,5,  5,6,  6,7,  7,8,  0,9,  9,10,  10,11,  11,12,  0,13,  13,14,  14,15,  15,16,  0,17,  17,18,  18,19,  19,20]
     pairs = np.array(pairs).reshape(-1,2)
 
-    colors = [100.,  100.,  100.,
-              100.,    0.,    0.,
-              150.,    0.,    0.,
-              200.,    0.,    0.,
-              255.,    0.,    0.,
-              100.,  100.,    0.,
-              150.,  150.,    0.,
-              200.,  200.,    0.,
-              255.,  255.,    0.,
-                0.,  100.,   50.,
-                0.,  150.,   75.,
-                0.,  200.,  100.,
-                0.,  255.,  125.,
-                0.,   50.,  100.,
-                0.,   75.,  150.,
-                0.,  100.,  200.,
-                0.,  125.,  255.,
-              100.,    0.,  100.,
-              150.,    0.,  150.,
-              200.,    0.,  200.,
-              255.,    0.,  255.]
+    if uniform_color is None:
+        colors = [100.,  100.,  100.,
+                  100.,    0.,    0.,
+                  150.,    0.,    0.,
+                  200.,    0.,    0.,
+                  255.,    0.,    0.,
+                  100.,  100.,    0.,
+                  150.,  150.,    0.,
+                  200.,  200.,    0.,
+                  255.,  255.,    0.,
+                    0.,  100.,   50.,
+                    0.,  150.,   75.,
+                    0.,  200.,  100.,
+                    0.,  255.,  125.,
+                    0.,   50.,  100.,
+                    0.,   75.,  150.,
+                    0.,  100.,  200.,
+                    0.,  125.,  255.,
+                  100.,    0.,  100.,
+                  150.,    0.,  150.,
+                  200.,    0.,  200.,
+                  255.,    0.,  255.]
+    else:
+        colors = uniform_color * 21
     colors = np.array(colors).reshape(-1,3)
     #colors = np.zeros_like(colors)
     poseScales = [1]
@@ -179,7 +182,8 @@ def render_body_keypoints(img: np.array,
     return render_keypoints(img, body_keypoints, pairs, colors, thickness_circle_ratio, thickness_line_ratio_wrt_circle, pose_scales, 0.1)
 
 def render_openpose(img: np.array,
-                    hand_keypoints: np.array) -> np.array:
+                    hand_keypoints: np.array,
+                    uniform_color=None) -> np.array:
     """
     Render keypoints in the OpenPose format on input image.
     Args:
@@ -189,5 +193,5 @@ def render_openpose(img: np.array,
         (np.array): Image of shape (H, W, 3) with keypoints drawn on top of the original image. 
     """
     #img = render_body_keypoints(img, body_keypoints)
-    img = render_hand_keypoints(img, hand_keypoints)
+    img = render_hand_keypoints(img, hand_keypoints, uniform_color=uniform_color)
     return img

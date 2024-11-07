@@ -39,7 +39,7 @@ def main():
     model = model.to(device)
     model.eval()
 
-    # Load config and run eval, one dataset at a time
+    # Load config and run evaluation, one dataset at a time
     print('Evaluating on datasets: {}'.format(args.dataset), flush=True)
     for dataset in args.dataset.split(','):
         dataset_cfg = dataset_eval_config()[dataset]

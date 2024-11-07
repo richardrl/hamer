@@ -631,9 +631,9 @@ def get_example(img_path: str, center_x: float, center_y: float,
     # the XY coordinates in centimeters
     # the camera is 2centimeters
     # from 3D points to 2D image plane points, we use the coefficient
-    # f * image_plane_in_cm / image_plane_in_pixels
-    # u = f * 2/256 x / z
-    # so to go from x_pixels to x_cm, we need:
+    # (f * image_plane_in_cm / image_plane_in_pixels)
+    # u = (f * 2/256) x / z
+    # so to go from x_pixels (x) to x_cm (x'), we need:
     # x' = 2/256 x - 1.0
     # because we also want to approximately zero center the keypoints
     # assuming we multiply the points by 2.0 later, this becomes
