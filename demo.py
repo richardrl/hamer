@@ -364,7 +364,9 @@ def main(args, model, model_cfg, device, detector, cpm):
                         tmesh.export(os.path.join(args.out_folder, f'{img_fn}_{person_id}.obj'))
 
         # save all label data
-        label_save_path = os.path.join(args.out_folder, img_path.name.split(".jpg")[0]+ "_label.torch")
+        # label_save_path = os.path.join(args.out_folder, img_path.name.split(".jpg")[0]+ "_label.torch")
+        label_save_path = os.path.join(args.out_folder, str(ego4d_utils.extract_rgb_generic(img_path, args.dataset_type)) + "_label.torch")
+
         torch.save(total_out_dict, label_save_path)
 
         tqdm.tqdm.write(f"Saving: {label_save_path}")
