@@ -96,6 +96,8 @@ def main(args, model, model_cfg, device, detector, cpm):
 
     # Get all demo images ends with .jpg or .png
 
+    if args.dataset_type == "dexycb":
+        assert args.file_type == ["*.jpg"], args.file_type
     img_paths = sorted([img for end in args.file_type for img in Path(args.img_folder).glob(end)], key=lambda path: ego4d_utils.extract_rgb_generic(path, args.dataset_type))
 
     if args.out_folder:
@@ -115,6 +117,8 @@ def main(args, model, model_cfg, device, detector, cpm):
         img_idxs = [ego4d_utils.extract_rgb_generic(path_str, args.dataset_type) for path_str in img_paths]
         img_set = set(img_idxs)
 
+        assert len(img_set) > 0
+
         # all the bbox undetected indices
         undetected_filepaths = glob.glob(os.path.join(args.out_folder, '*_nobbox.txt'))
         undetected_set = set([extract_nobbox_generic(path_str, args.dataset_type) for path_str in undetected_filepaths])
@@ -124,6 +128,8 @@ def main(args, model, model_cfg, device, detector, cpm):
             img_paths = [pathlib.Path(os.path.join(args.img_folder, os.path.basename(args.img_folder.rstrip("/")) + f"_{img_idx:010d}") + ".jpg") for img_idx in (img_set - label_set - undetected_set)]
         elif args.dataset_type == "egoexo":
             img_paths = [pathlib.Path(os.path.join(args.img_folder, f"{img_idx:06d}") + ".jpg") for img_idx in (img_set - label_set - undetected_set)]
+        elif args.dataset_type == "dexycb":
+            img_paths = [pathlib.Path(os.path.join(args.img_folder, f"color_{img_idx:06d}.jpg")) for img_idx in (img_set - label_set - undetected_set)]
         else:
             raise NotImplementedError
 
@@ -148,7 +154,7 @@ def main(args, model, model_cfg, device, detector, cpm):
         print(f"ln103 img load time {time.time() - t0}")
 
         # convert bgr to rgb before passing into models
-        img = img_cv2.copy()[:, :, ::-1]
+        full_img = img_cv2.copy()[:, :, ::-1]
 
         if args.bbox_json:
             # TODO: load bboxes here
@@ -169,7 +175,7 @@ def main(args, model, model_cfg, device, detector, cpm):
             # Detect human keypoints for each person
             t0 = time.time()
             vitposes_out = cpm.predict_pose(
-                img,
+                full_img,
                 [np.concatenate([pred_bboxes, pred_scores[:, None]], axis=1)],
             )
             print(f"vit pose time: {time.time() - t0}")
@@ -198,7 +204,9 @@ def main(args, model, model_cfg, device, detector, cpm):
 
         if len(bboxes) == 0:
             print("Found 0 bbox, skipping...")
-            label_save_path = os.path.join(args.out_folder, img_path.name.split(".jpg")[0] + "_nobbox.txt")
+            # label_save_path = os.path.join(args.out_folder, img_path.name.split(".jpg")[0] + "_nobbox.txt")
+            label_save_path = os.path.join(args.out_folder, str(ego4d_utils.extract_rgb_generic(img_path, args.dataset_type)) + "_nobbox.txt")
+
             with open(label_save_path, 'w') as file:
                 time.sleep(.0001)
 
@@ -282,12 +290,12 @@ def main(args, model, model_cfg, device, detector, cpm):
             pred_cam[:,1] = multiplier*pred_cam[:,1]
             box_center = batch["box_center"].float()
             box_size = batch["box_size"].float()
-            img_size = batch["img_size"].float()
+            full_img_size = batch["full_img_size"].float()
             multiplier = (2*batch['right']-1)
-            scaled_focal_length = model_cfg.EXTRA.FOCAL_LENGTH / model_cfg.MODEL.IMAGE_SIZE * img_size.max()
+            scaled_focal_length = model_cfg.EXTRA.FOCAL_LENGTH / model_cfg.MODEL.IMAGE_SIZE * full_img_size.max()
 
             # TODO: what is this?
-            pred_cam_t_full = cam_crop_to_full(pred_cam, box_center, box_size, img_size, scaled_focal_length).detach().cpu().numpy()
+            pred_cam_t_full = cam_crop_to_full(pred_cam, box_center, box_size, full_img_size, scaled_focal_length).detach().cpu().numpy()
 
             # B, num_keypoints, 2
             pred_keypoints_2d_copy = out['pred_keypoints_2d'].detach().clone()
@@ -300,19 +308,20 @@ def main(args, model, model_cfg, device, detector, cpm):
 
             if args.render:
                 # Render the result
-                batch_size = batch['img'].shape[0]
+                batch_size = batch['img_patch'].shape[0]
                 for n in range(batch_size):
                     # Get filename from path img_path
                     img_fn, _ = os.path.splitext(os.path.basename(img_path))
                     person_id = int(batch['personid'][n])
-                    white_img = (torch.ones_like(batch['img'][n]).cpu() - DEFAULT_MEAN[:,None,None]/255) / (DEFAULT_STD[:,None,None]/255)
-                    input_patch = batch['img'][n].cpu() * (DEFAULT_STD[:,None,None]/255) + (DEFAULT_MEAN[:,None,None]/255)
+                    white_img = (torch.ones_like(batch['img_patch'][n]).cpu() - DEFAULT_MEAN[:,None,None]/255) / (DEFAULT_STD[:,None,None]/255)
+                    input_patch = batch['img_patch'][n].cpu() * (DEFAULT_STD[:,None,None]/255) + (DEFAULT_MEAN[:,None,None]/255)
                     input_patch = input_patch.permute(1,2,0).numpy()
 
                     # produces rgb image
+                    # img is the cropped image
                     regression_img = renderer(out['pred_vertices'][n].detach().cpu().numpy(),
                                             out['pred_cam_t'][n].detach().cpu().numpy(),
-                                            batch['img'][n],
+                                            batch['img_patch'][n],
                                             mesh_base_color=LIGHT_BLUE,
                                             scene_bg_color=(1, 1, 1),
                                             )
@@ -368,9 +377,11 @@ def main(args, model, model_cfg, device, detector, cpm):
                 scene_bg_color=(1, 1, 1),
                 focal_length=scaled_focal_length,
             )
-            cam_view = renderer.render_rgba_multiple(all_verts, cam_t=all_cam_t, render_res=img_size[n], is_right=all_right, **misc_args)
+            # renders the images
+            cam_view = renderer.render_rgba_multiple(all_verts, cam_t=all_cam_t, render_res=full_img_size[n], is_right=all_right, **misc_args)
 
             # Overlay image
+            # full image
             input_img = img_cv2.astype(np.float32)[:,:,::-1]/255.0
             input_img = np.concatenate([input_img, np.ones_like(input_img[:,:,:1])], axis=2) # Add alpha channel
             input_img_overlay = input_img[:,:,:3] * (1-cam_view[:,:,3:]) + cam_view[:,:,:3] * cam_view[:,:,3:]
@@ -397,7 +408,7 @@ def main(args, model, model_cfg, device, detector, cpm):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='HaMeR demo code')
     parser.add_argument('--checkpoint', type=str, default=DEFAULT_CHECKPOINT, help='Path to pretrained model checkpoint')
-    parser.add_argument('--img_folder', type=str, default='images', help='Folder with input images')
+    parser.add_argument('--img_folder', type=str, default='images', help='Folder with input images. Assume format: 000723')
     parser.add_argument('--out_folder', type=str, default='demo_out', help='Output folder to save rendered results. When passing in a meta folder, this out folder is associated with a clip folder.')
     parser.add_argument('--side_view', dest='side_view', action='store_true', default=False, help='If set, render side view also. This is a rotated view of the hand with white background.')
     parser.add_argument('--full_frame', dest='full_frame', action='store_true', default=True, help='If set, render all people together also')
@@ -442,7 +453,9 @@ if __name__ == '__main__':
         detector = None
     elif args.body_detector == 'vitdet':
         from detectron2.config import LazyConfig
-        cfg_path = Path(hamer.__file__).parent/'configs'/'cascade_mask_rcnn_vitdet_h_75ep.py'
+        # cfg_path = Path(hamer.__file__).parent/'configs'/'cascade_mask_rcnn_vitdet_h_75ep.py'
+        cfg_path = Path("/data/scratch-oc40/pulkitag/rli14/hamer_diffusion_policy/hamer/hamer/configs/cascade_mask_rcnn_vitdet_h_75ep.py")
+
         detectron2_cfg = LazyConfig.load(str(cfg_path))
 
         detectron2_cfg.train.init_checkpoint = "https://dl.fbaipublicfiles.com/detectron2/ViTDet/COCO/cascade_mask_rcnn_vitdet_h/f328730692/model_final_f05665.pkl"

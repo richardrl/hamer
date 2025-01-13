@@ -84,7 +84,7 @@ def gen_trans_from_patch_cv(c_x: float, c_y: float,
                             dst_width: float, dst_height: float,
                             scale: float, rot: float) -> np.array:
     """
-    Create transformation matrix for the bounding box crop.
+    Create transformation matrix for the bounding box crop and SCALE to dst_width, dst_height.
     Args:
         c_x (float): Bounding box center x coordinate in the original image.
         c_y (float): Bounding box center y coordinate in the original image.
@@ -633,6 +633,7 @@ def get_example(img_path: str, center_x: float, center_y: float,
     # from 3D points to 2D image plane points, we use the coefficient
     # (f * image_plane_in_cm / image_plane_in_pixels)
     # u = (f * 2/256) x / z
+    # x_pixels range: 256, 256
     # so to go from x_pixels (x) to x_cm (x'), we need:
     # x' = 2/256 x - 1.0
     # because we also want to approximately zero center the keypoints
@@ -1020,3 +1021,23 @@ def extreme_cropping_aggressive(center_x: float, center_y: float, width: float, 
     return center_x, center_y, max(width, height), max(width, height)
 
 
+def apply_affine_transform(input_vec, affine_transform):
+    # input_vec: N, 2
+    # affine_transform
+    assert input_vec.shape[1] == 2, input_vec.shape
+    assert len(input_vec.shape) == 2
+    input_vec = (affine_transform[:, :2] @ input_vec.T + affine_transform[:, 2][:, np.newaxis]).T
+    return input_vec
+
+
+def apply_inv_affine_transform(input_vec, affine_transform):
+    # input vec should be (N, 2)
+    # affine transform is (2, 3)
+    assert input_vec.shape[1] == 2, input_vec.shape
+    assert len(input_vec.shape) == 2, input_vec.shape
+    assert len(affine_transform.shape) == 2, affine_transform.shape
+    input_vec = input_vec - affine_transform[:, 2]
+
+    # -> N, 2
+    input_vec = (np.linalg.inv(affine_transform[:, :2]) @ input_vec.T).T
+    return input_vec

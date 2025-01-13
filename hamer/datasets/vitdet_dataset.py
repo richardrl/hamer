@@ -72,7 +72,7 @@ class ViTDetDataset(torch.utils.data.Dataset):
                 cvimg  = gaussian(cvimg, sigma=(downsampling_factor-1)/2, channel_axis=2, preserve_range=True)
 
 
-        img_patch_cv, trans = generate_image_patch_cv2(cvimg,
+        img_patch_cv, affine_transform = generate_image_patch_cv2(cvimg,
                                                     center_x, center_y,
                                                     bbox_size, bbox_size,
                                                     patch_width, patch_height,
@@ -86,13 +86,16 @@ class ViTDetDataset(torch.utils.data.Dataset):
             img_patch[n_c, :, :] = (img_patch[n_c, :, :] - self.mean[n_c]) / self.std[n_c]
 
         item = {
-            'img': img_patch,
+            'img_patch': img_patch,
             'personid': int(self.personid[idx]),
         }
         item['box_center'] = self.center[idx].copy()
         item['box_size'] = bbox_size
-        item['img_size'] = 1.0 * np.array([cvimg.shape[1], cvimg.shape[0]])
+        # item['img_size'] = 1.0 * np.array([cvimg.shape[1], cvimg.shape[0]])
+
+        item['full_img_size'] = 1.0 * np.array([cvimg.shape[1], cvimg.shape[0]])
+
         item['right'] = self.right[idx].copy()
-        item['crop_trans'] = trans.copy()
+        item['crop_trans'] = affine_transform.copy()
         item['boxes'] = self.boxes[idx].copy()
         return item

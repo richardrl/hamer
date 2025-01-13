@@ -265,6 +265,7 @@ class Renderer:
                 np.radians(rot_angle), rot_axis)
         mesh.apply_transform(rot)
 
+        # hamer to opengl
         rot = trimesh.transformations.rotation_matrix(
             np.radians(180), [1, 0, 0])
         mesh.apply_transform(rot)
@@ -380,6 +381,7 @@ class Renderer:
         for node in light_nodes:
             scene.add_node(node)
 
+        # renders from the scenes main camera
         color, rend_depth = renderer.render(scene, flags=pyrender.RenderFlags.RGBA)
         color = color.astype(np.float32) / 255.0
         renderer.delete()

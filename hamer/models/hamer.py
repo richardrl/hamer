@@ -97,7 +97,7 @@ class HAMER(pl.LightningModule):
         """
 
         # Use RGB image as input
-        x = batch['img']
+        x = batch['img_patch']
         batch_size = x.shape[0]
 
         # Compute conditioning features using the backbone
@@ -118,10 +118,13 @@ class HAMER(pl.LightningModule):
         pred_cam_t = torch.stack([pred_cam[:, 1],
                                   pred_cam[:, 2],
                                   2*focal_length[:, 0]/(self.cfg.MODEL.IMAGE_SIZE * pred_cam[:, 0] +1e-9)],dim=-1)
+
+        # this is the extrinsic and focal length sending us to the cropped camera frame
         output['pred_cam_t'] = pred_cam_t
         output['focal_length'] = focal_length
 
         # Compute model vertices, joints and the projected joints
+        # these are rotation matrices
         pred_mano_params['global_orient'] = pred_mano_params['global_orient'].reshape(batch_size, -1, 3, 3)
         pred_mano_params['hand_pose'] = pred_mano_params['hand_pose'].reshape(batch_size, -1, 3, 3)
         pred_mano_params['betas'] = pred_mano_params['betas'].reshape(batch_size, -1)
